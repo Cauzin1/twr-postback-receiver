@@ -1,0 +1,19 @@
+# Blueprint de deploy no Render.
+# Cria um Web Service Node + um disco persistente para o arquivo SQLite.
+services:
+  - type: web
+    name: twr-postback-receiver
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_PATH
+        value: /var/data/sales.db
+      - key: WEBHOOK_SECRET
+        sync: false # defina manualmente no dashboard do Render
+    disk:
+      name: sqlite-data
+      mountPath: /var/data
+      sizeGB: 1
