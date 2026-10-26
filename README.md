@@ -120,8 +120,9 @@ O enunciado pedia explicitamente para pensar no que acontece com o serviço
 
 - **Dinheiro em centavos (inteiro).** Evita erros de ponto flutuante em somatórios.
 
-- **Persistência em SQLite com disco.** Sobrevive a restart/redeploy, sem custo de
-  infraestrutura. Modo WAL para o `GET` de relatório não bloquear o `POST`.
+- **Persistência em SQLite.** Arquivo único, sem custo de infraestrutura. Modo WAL
+  para o `GET` de relatório não bloquear o `POST`. Em um host com disco persistente
+  o arquivo sobrevive a restart/redeploy (ver trade-off do plano free abaixo).
 
 - **Payload cru guardado (`raw_payload`).** Para auditoria e reprocessamento futuro,
   mesmo que o modelo canônico evolua.
@@ -147,11 +148,21 @@ O enunciado pedia explicitamente para pensar no que acontece com o serviço
   avaliação. Em produção ficaria atrás de auth.
 - **Testes automatizados.** Validei o fluxo manualmente (ver seção de exemplos).
   Com mais tempo, adicionaria testes de idempotência e de validação com `vitest`.
+- **Disco persistente no deploy.** O serviço está no **plano free do Render**, que
+  não oferece disco persistente, então o SQLite roda em filesystem **efêmero**: os
+  dados são reiniciados a cada redeploy e quando a instância free "dorme" por
+  inatividade. Foi uma escolha consciente — para o propósito de avaliação, manter o
+  serviço no ar a custo zero vale mais que a durabilidade dos dados. A lógica de
+  idempotência, validação e status HTTP (o foco do desafio) funciona identicamente;
+  só não garante durabilidade entre deploys. Em produção eu subiria num plano com
+  disco (basta reinserir o bloco `disk` + `DATABASE_PATH` no `render.yaml`) ou
+  trocaria por um banco gerenciado.
 
 ---
 
 ## Deploy (Render)
 
 O arquivo [`render.yaml`](./render.yaml) descreve o serviço: build com
-`npm install && npm run build`, start com `npm start`, disco persistente montado em
-`/var/data` e `DATABASE_PATH=/var/data/sales.db`. Defina `WEBHOOK_SECRET` no dashboard.
+`npm install && npm run build`, start com `npm start` e healthcheck em `/health`.
+Roda no **plano free** (sem disco persistente — ver trade-off nas premissas acima).
+Defina `WEBHOOK_SECRET` no dashboard do Render.
