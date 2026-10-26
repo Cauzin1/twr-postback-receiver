@@ -3,7 +3,8 @@
 Serviço em **TypeScript** que recebe notificações de venda (webhooks/postbacks) de
 plataformas de checkout via `POST` e expõe um relatório agregado via `GET`.
 
-- **URL pública:** _(preencher após o deploy — ex.: `https://twr-postback-receiver.onrender.com`)_
+- **URL pública:** **https://twr-postback-receiver.onrender.com**
+  (plano free do Render — a primeira requisição após inatividade pode levar ~30–50 s enquanto a instância "acorda")
 - **Stack:** Node.js + [Fastify](https://fastify.dev) + [SQLite](https://www.sqlite.org) (`better-sqlite3`)
 
 ---
