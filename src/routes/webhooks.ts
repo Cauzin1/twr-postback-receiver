@@ -3,22 +3,11 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { db } from "../db";
 import { config } from "../config";
 
-/**
- * Schema do postback que ESTE serviço aceita (nosso "contrato canônico").
- *
- * Decisão: cada plataforma de checkout (Hotmart, Kiwify, Stripe...) manda um
- * formato diferente. Normalizar todas estava fora do escopo de 3-4h, então
- * defini UM formato canônico, valido ele de forma estrita e guardo o payload
- * cru em `raw_payload` para auditoria. Em produção, o passo seguinte seria um
- * "adapter" por plataforma que traduz para este formato.
- */
 const salePostbackSchema = {
   type: "object",
   required: ["event", "transaction_id", "amount_cents"],
   additionalProperties: true,
   properties: {
-    // Opcional: se a plataforma manda um id único do evento, usamos ele como
-    // chave de idempotência. Se não vier, derivamos um (ver abaixo).
     event_id: { type: "string", minLength: 1, maxLength: 200 },
     event: {
       type: "string",
@@ -62,13 +51,8 @@ interface SalePostback {
   customer?: { email?: string; name?: string };
 }
 
-/**
- * Verifica o segredo compartilhado enviado no header `x-webhook-secret`.
- * Usa comparação em tempo constante para não vazar informação por timing.
- * Se WEBHOOK_SECRET não estiver configurado, a verificação é pulada.
- */
 function isAuthorized(req: FastifyRequest): boolean {
-  if (!config.webhookSecret) return true; // auth desligada
+  if (!config.webhookSecret) return true;
   const provided = req.headers["x-webhook-secret"];
   if (typeof provided !== "string") return false;
   const a = Buffer.from(provided);
@@ -99,9 +83,6 @@ export async function webhookRoutes(app: FastifyInstance) {
 
       const body = req.body as SalePostback;
 
-      // Chave de idempotência: usa event_id da plataforma, ou deriva um hash
-      // determinístico de (transaction_id + event). Assim, o mesmo postback
-      // reenviado cai sempre na mesma chave.
       const eventId =
         body.event_id ??
         createHash("sha256")
@@ -123,9 +104,6 @@ export async function webhookRoutes(app: FastifyInstance) {
         raw_payload: JSON.stringify(body),
       });
 
-      // info.changes === 0 => UNIQUE bateu => era duplicata (retry).
-      // Respondemos 200 mesmo assim: a plataforma já entregou, não deve
-      // reenviar. Respondemos 201 quando foi realmente criado.
       const duplicate = info.changes === 0;
       return reply.code(duplicate ? 200 : 201).send({
         status: duplicate ? "duplicate_ignored" : "accepted",

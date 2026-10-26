@@ -1,17 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { db } from "../db";
 
-/**
- * Relatório de vendas por GET.
- *
- * Entrega dois blocos:
- *  - `summary`: números agregados (contagens, receita, por produto).
- *  - `events`:  a lista de eventos recebidos, com filtros e paginação.
- *
- * Receita líquida = aprovadas - (reembolsos + chargebacks). Dinheiro é tratado
- * sempre em centavos (inteiro) para evitar erro de ponto flutuante.
- */
-
 const querySchema = {
   type: "object",
   additionalProperties: false,
@@ -41,7 +30,6 @@ export async function salesRoutes(app: FastifyInstance) {
     async (req) => {
       const q = req.query as SalesQuery;
 
-      // Monta o WHERE dinamicamente a partir dos filtros presentes.
       const where: string[] = [];
       const params: Record<string, unknown> = {};
       if (q.event) {
@@ -62,7 +50,6 @@ export async function salesRoutes(app: FastifyInstance) {
       }
       const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
-      // ----- Agregações -----
       const byEvent = db
         .prepare(
           `SELECT event_type, COUNT(*) AS count, SUM(amount_cents) AS amount_cents
@@ -100,7 +87,6 @@ export async function salesRoutes(app: FastifyInstance) {
         revenue_cents: number;
       }[];
 
-      // ----- Lista paginada -----
       const listParams = { ...params, limit: q.limit, offset: q.offset };
       const events = db
         .prepare(

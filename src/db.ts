@@ -3,22 +3,10 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { config } from "./config";
 
-/**
- * Inicializa a conexão com o SQLite e garante o schema.
- *
- * Por que SQLite: dá persistência real (sobrevive a restart/redeploy) com
- * zero infraestrutura. E, mais importante para este serviço, a constraint
- * UNIQUE em `event_id` é o que nos dá IDEMPOTÊNCIA de graça — plataformas de
- * checkout reenviam o mesmo postback várias vezes (retry), e nós não podemos
- * contar a mesma venda duas vezes.
- */
-
-// Garante que a pasta do arquivo .db exista antes de abrir a conexão.
 mkdirSync(dirname(config.databasePath), { recursive: true });
 
 export const db = new Database(config.databasePath);
 
-// WAL melhora leituras concorrentes (o GET de relatório não bloqueia o POST).
 db.pragma("journal_mode = WAL");
 
 db.exec(`

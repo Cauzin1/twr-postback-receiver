@@ -1,7 +1,3 @@
-# Blueprint de deploy no Render (plano free).
-# Web Service Node. NÃO usa disco persistente: o plano free do Render não o
-# suporta, então o SQLite roda no filesystem efêmero — decisão consciente,
-# ver seção "Premissas e decisões" no README.
 services:
   - type: web
     name: twr-postback-receiver
@@ -12,4 +8,4 @@ services:
     healthCheckPath: /health
     envVars:
       - key: WEBHOOK_SECRET
-        sync: false # defina manualmente no dashboard do Render
+        sync: false
