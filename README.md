@@ -1,25 +1,25 @@
 # Receptor de Postbacks — Desafio TWR
 
-Esse é o serviço que montei para o desafio da TWR: um app em **TypeScript** que recebe
+Olá pessoal, criei esse serviço que montei pro desafio: bsicamente é um app em **TypeScript** que recebe
 notificações de venda (webhooks/postbacks) de plataformas de checkout via `POST` e
-devolve um relatório agregado via `GET`.
+devolve um relatório agregado via `GET`, tudo bem simples, mas tentei colocar alguns casos de borda também.
 
-Desenvolvi pensando o tempo todo em como plataformas reais se comportam — elas
+Desenvolvi pensando o tempo todo em como plataformas reais se comportam, elas
 reenviam o mesmo evento, mandam coisas fora de ordem e nem sempre no formato que a
-gente espera. Quase toda decisão daqui nasceu disso: preferi entregar poucas coisas,
-mas bem pensadas e que eu consiga defender, em vez de encher de features pela metade.
+gente espera. Acabei preferindo entregar poucas coisas, mas bem pensadas e e polidas,
+em vez de encher de features pela metade.
 
 - **URL pública:** **https://twr-postback-receiver.onrender.com**
-  (plano free do Render — a primeira requisição após inatividade pode levar ~30–50 s enquanto a instância "acorda")
+  (a primeira requisição após inatividade pode levar ~30–50 s enquanto a instância "acorda", eu utilizo um plano free entao infelizmente é assim)
 - **Stack:** Node.js + [Fastify](https://fastify.dev) + [SQLite](https://www.sqlite.org) (`better-sqlite3`)
 
 ---
 
-## Como rodar localmente
+## Como você pode rodar localmente
 
 ```bash
-npm install          # compila o módulo nativo do SQLite
-npm run dev          # sobe em http://localhost:3000 com reload
+npm install         
+npm run dev          # sobe em http://localhost:3000 ou em outra porta, se essa tiver ocupada
 # ou, para produção:
 npm run build && npm start
 ```
@@ -87,7 +87,7 @@ Filtros opcionais: `event`, `product_id`, `from` / `to` (ISO 8601), `limit` (1�
 {
   "summary": {
     "total_events": 3,
-    // Receita SEMPRE agrupada por moeda — nunca somo centavos de moedas diferentes.
+    // Receita SEMPRE agrupada por moeda — nunca somo centavos de moedas diferentes, beleza?
     "by_currency": {
       "BRL": { "gross_revenue_cents": 14490, "refunds_cents": 9990, "net_revenue_cents": 4500 }
     },
@@ -111,8 +111,7 @@ reais**, e foi esse o fio condutor de tudo o que decidi.
 
 ### Por que escolhi essa stack
 
-- **Fastify (em vez de Express).** Pra mim o ponto mais crítico de um receptor de
-  webhook é a entrada: ela vem de fora e eu não posso confiar nela. O Fastify valida o
+- **Fastify (em vez de Express por exemplo).** Pra mim o ponto mais crítico de um receptor de webhook é a entrada: ela vem de fora e eu não posso confiar nela. O Fastify valida o
   corpo por JSON Schema *antes* do meu código rodar — eu só declaro o formato esperado
   e ele barra o que estiver errado. No Express eu teria que trazer uma lib à parte
   (`zod`/`joi`) pra ter a mesma garantia. Juntando isso à performance maior, ao suporte
@@ -140,7 +139,7 @@ reais**, e foi esse o fio condutor de tudo o que decidi.
   `event_id` (enviado pela plataforma ou derivado de `sha256(transaction_id + event)`)
   com **constraint `UNIQUE`** no banco. Um reenvio cai na mesma chave, é ignorado
   (`INSERT OR IGNORE`) e eu devolvo `200 duplicate_ignored`. A deduplicação é garantida
-  pelo banco, não por lógica minha sujeita a corrida.
+  pelo banco, não por lógica minha, assim garantimos mais segurança.
 
 - **Status HTTP pensados para o emissor.** Webhooks usam o status pra decidir se
   reenviam. Então eu devolvo `2xx` sempre que a entrega deu certo (inclusive em
@@ -179,7 +178,7 @@ reais**, e foi esse o fio condutor de tudo o que decidi.
   cobre o requisito de autenticação de forma mais simples de testar. HMAC seria o
   upgrade natural de segurança.
 - **Banco gerenciado (Postgres), fila/worker assíncrono.** Para o volume de um
-  desafio, SQLite + processamento síncrono é suficiente e mais simples de defender.
+  desafio, SQLite + processamento síncrono é suficiente nesse contexto aqui.
   Em escala real, eu colocaria uma fila para desacoplar recepção de processamento.
 - **Autenticação no `GET /sales`.** O relatório está aberto para facilitar a
   avaliação. Em produção ficaria atrás de auth.
@@ -219,7 +218,7 @@ alguns no código, outros como decisão consciente.
 - **Duplicata com dados divergentes.** Se a plataforma reenvia o mesmo `event_id` com
   um `amount_cents` diferente, mantenho o primeiro registro (`INSERT OR IGNORE`) e
   **logo um aviso**. Decidir "qual é o valor verdadeiro" exigiria regra de negócio que
-  o enunciado não define — prefiro não adivinhar silenciosamente.
+  o enunciado não define, sendo assim eu prefiro não adivinhar silenciosamente, poderia dar problema isso (se fosse um caso real, por exemplo).
 - **Replay malicioso.** O segredo compartilhado é estático: quem interceptar um request
   pode reenviá-lo. A idempotência protege os dados (não duplica), mas a mitigação real
   seria **assinatura HMAC + tolerância de timestamp** (como Stripe/Hotmart fazem).
@@ -234,3 +233,6 @@ O arquivo [`render.yaml`](./render.yaml) descreve o serviço: build com
 `npm install && npm run build`, start com `npm start` e healthcheck em `/health`.
 Roda no **plano free** (sem disco persistente — ver trade-off nas premissas acima).
 Defina `WEBHOOK_SECRET` no dashboard do Render.
+
+
+Acredito que seja isso, muito obrigado pelo tempo e atenção. Se precisarem de mim sigo a disposição!
