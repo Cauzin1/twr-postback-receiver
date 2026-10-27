@@ -23,6 +23,12 @@ interface SalesQuery {
   offset: number;
 }
 
+interface CurrencyTotals {
+  gross_revenue_cents: number;
+  refunds_cents: number;
+  net_revenue_cents: number;
+}
+
 export async function salesRoutes(app: FastifyInstance) {
   app.get(
     "/sales",
@@ -50,39 +56,61 @@ export async function salesRoutes(app: FastifyInstance) {
       }
       const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
-      const byEvent = db
+      const byEventRows = db
         .prepare(
-          `SELECT event_type, COUNT(*) AS count, SUM(amount_cents) AS amount_cents
+          `SELECT event_type, COUNT(*) AS count
            FROM sales ${whereSql} GROUP BY event_type`,
         )
-        .all(params) as { event_type: string; count: number; amount_cents: number }[];
+        .all(params) as { event_type: string; count: number }[];
 
-      const totals = { approved: 0, refunded: 0, chargeback: 0 };
       let totalEvents = 0;
-      const byEventMap: Record<string, { count: number; amount_cents: number }> = {};
-      for (const row of byEvent) {
+      const byEvent: Record<string, { count: number }> = {};
+      for (const row of byEventRows) {
         totalEvents += row.count;
-        byEventMap[row.event_type] = {
-          count: row.count,
-          amount_cents: row.amount_cents ?? 0,
-        };
-        if (row.event_type === "purchase.approved") totals.approved = row.amount_cents ?? 0;
-        if (row.event_type === "purchase.refunded") totals.refunded = row.amount_cents ?? 0;
-        if (row.event_type === "purchase.chargeback") totals.chargeback = row.amount_cents ?? 0;
+        byEvent[row.event_type] = { count: row.count };
+      }
+
+      const moneyRows = db
+        .prepare(
+          `SELECT currency, event_type, SUM(amount_cents) AS amount_cents
+           FROM sales ${whereSql} GROUP BY currency, event_type`,
+        )
+        .all(params) as { currency: string; event_type: string; amount_cents: number }[];
+
+      const byCurrency: Record<string, CurrencyTotals> = {};
+      for (const row of moneyRows) {
+        const totals = (byCurrency[row.currency] ??= {
+          gross_revenue_cents: 0,
+          refunds_cents: 0,
+          net_revenue_cents: 0,
+        });
+        const amount = row.amount_cents ?? 0;
+        if (row.event_type === "purchase.approved") {
+          totals.gross_revenue_cents += amount;
+        } else if (
+          row.event_type === "purchase.refunded" ||
+          row.event_type === "purchase.chargeback"
+        ) {
+          totals.refunds_cents += amount;
+        }
+      }
+      for (const totals of Object.values(byCurrency)) {
+        totals.net_revenue_cents = totals.gross_revenue_cents - totals.refunds_cents;
       }
 
       const byProduct = db
         .prepare(
-          `SELECT product_id, product_name,
+          `SELECT product_id, product_name, currency,
                   COUNT(*) AS count,
                   SUM(CASE WHEN event_type = 'purchase.approved' THEN amount_cents ELSE 0 END) AS revenue_cents
            FROM sales ${whereSql}
-           GROUP BY product_id, product_name
+           GROUP BY product_id, product_name, currency
            ORDER BY revenue_cents DESC`,
         )
         .all(params) as {
         product_id: string | null;
         product_name: string | null;
+        currency: string;
         count: number;
         revenue_cents: number;
       }[];
@@ -102,11 +130,8 @@ export async function salesRoutes(app: FastifyInstance) {
       return {
         summary: {
           total_events: totalEvents,
-          gross_revenue_cents: totals.approved,
-          refunds_cents: totals.refunded + totals.chargeback,
-          net_revenue_cents: totals.approved - totals.refunded - totals.chargeback,
-          currency: "BRL",
-          by_event: byEventMap,
+          by_currency: byCurrency,
+          by_event: byEvent,
           by_product: byProduct,
         },
         pagination: { limit: q.limit, offset: q.offset, returned: events.length },

@@ -12,3 +12,7 @@ data/
 # Variáveis de ambiente
 .env
 .env.local
+
+# Coleções locais do Postman (podem conter segredos)
+.postman/
+postman/

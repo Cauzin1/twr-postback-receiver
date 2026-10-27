@@ -3,22 +3,21 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { db } from "../db";
 import { config } from "../config";
 
+const KNOWN_EVENTS = new Set([
+  "purchase.approved",
+  "purchase.pending",
+  "purchase.refunded",
+  "purchase.chargeback",
+  "purchase.canceled",
+]);
+
 const salePostbackSchema = {
   type: "object",
   required: ["event", "transaction_id", "amount_cents"],
   additionalProperties: true,
   properties: {
     event_id: { type: "string", minLength: 1, maxLength: 200 },
-    event: {
-      type: "string",
-      enum: [
-        "purchase.approved",
-        "purchase.pending",
-        "purchase.refunded",
-        "purchase.chargeback",
-        "purchase.canceled",
-      ],
-    },
+    event: { type: "string", minLength: 1, maxLength: 100 },
     transaction_id: { type: "string", minLength: 1, maxLength: 200 },
     amount_cents: { type: "integer", minimum: 0 },
     currency: { type: "string", minLength: 3, maxLength: 3 },
@@ -105,9 +104,19 @@ export async function webhookRoutes(app: FastifyInstance) {
       });
 
       const duplicate = info.changes === 0;
+      const recognized = KNOWN_EVENTS.has(body.event);
+
+      if (!recognized) {
+        req.log.warn(
+          { event: body.event, transaction_id: body.transaction_id },
+          "evento de tipo desconhecido recebido e armazenado",
+        );
+      }
+
       return reply.code(duplicate ? 200 : 201).send({
         status: duplicate ? "duplicate_ignored" : "accepted",
         event_id: eventId,
+        recognized,
       });
     },
   );

@@ -56,13 +56,17 @@ curl -X POST http://localhost:3000/webhooks/sales \
 
 Respostas possíveis:
 
-- `201 { "status": "accepted", "event_id": "..." }` — venda registrada.
-- `200 { "status": "duplicate_ignored", "event_id": "..." }` — postback repetido (retry da plataforma); **ignorado com segurança**.
-- `400 { "error": "validation_error", ... }` — payload fora do contrato.
+- `201 { "status": "accepted", "event_id": "...", "recognized": true }` — venda registrada.
+- `200 { "status": "duplicate_ignored", "event_id": "...", "recognized": true }` — postback repetido (retry da plataforma); **ignorado com segurança**.
+- `400 { "error": "validation_error", ... }` — payload fora do contrato (campo obrigatório ausente, tipo errado etc.).
 - `401 { "error": "invalid_webhook_secret" }` — segredo ausente/errado (quando `WEBHOOK_SECRET` está configurado).
 
-**Campos:** `event` e `transaction_id` e `amount_cents` são obrigatórios.
-`event` ∈ `purchase.approved | purchase.pending | purchase.refunded | purchase.chargeback | purchase.canceled`.
+O campo `recognized` diz se o `event` é um tipo conhecido. Tipos desconhecidos são
+**aceitos e armazenados** (`recognized: false`), não rejeitados — ver [Edge cases](#edge-cases-considerados).
+
+**Campos:** `event`, `transaction_id` e `amount_cents` são obrigatórios.
+Tipos de `event` reconhecidos (que alimentam o cálculo de receita):
+`purchase.approved | purchase.pending | purchase.refunded | purchase.chargeback | purchase.canceled`.
 Dinheiro sempre em **centavos (inteiro)**.
 
 ### Exemplo de `GET` (relatório)
@@ -77,17 +81,20 @@ Filtros opcionais: `event`, `product_id`, `from` / `to` (ISO 8601), `limit` (1�
 {
   "summary": {
     "total_events": 3,
-    "gross_revenue_cents": 14490,   // soma das aprovadas
-    "refunds_cents": 9990,          // reembolsos + chargebacks
-    "net_revenue_cents": 4500,      // líquido
-    "currency": "BRL",
-    "by_event":   { "purchase.approved": { "count": 2, "amount_cents": 14490 }, "...": {} },
-    "by_product": [ { "product_id": "p1", "product_name": "Curso de TypeScript", "count": 2, "revenue_cents": 9990 } ]
+    // Receita SEMPRE agrupada por moeda — nunca somo centavos de moedas diferentes.
+    "by_currency": {
+      "BRL": { "gross_revenue_cents": 14490, "refunds_cents": 9990, "net_revenue_cents": 4500 }
+    },
+    "by_event":   { "purchase.approved": { "count": 2 }, "purchase.refunded": { "count": 1 } },
+    "by_product": [ { "product_id": "p1", "product_name": "Curso de TypeScript", "currency": "BRL", "count": 2, "revenue_cents": 14490 } ]
   },
   "pagination": { "limit": 50, "offset": 0, "returned": 3 },
   "events": [ /* eventos mais recentes primeiro */ ]
 }
 ```
+
+`gross` = aprovadas, `refunds` = reembolsos + chargebacks, `net` = `gross − refunds`,
+**calculados por moeda**. Contagens (`by_event`) são agnósticas de moeda.
 
 ---
 
@@ -158,6 +165,37 @@ O enunciado pedia explicitamente para pensar no que acontece com o serviço
   só não garante durabilidade entre deploys. Em produção eu subiria num plano com
   disco (basta reinserir o bloco `disk` + `DATABASE_PATH` no `render.yaml`) ou
   trocaria por um banco gerenciado.
+
+---
+
+## Edge cases considerados
+
+O enunciado pede para pensar no serviço recebendo postbacks de **plataformas reais**,
+que são imprevisíveis. Abaixo os casos de borda que mapeei e como cada um é tratado —
+alguns no código, outros como decisão consciente.
+
+| Edge case | Comportamento |
+| --- | --- |
+| **Retry / postback duplicado** | Dedup por `UNIQUE(event_id)` + `INSERT OR IGNORE`. O 2º envio responde `200 duplicate_ignored` e **não** conta a venda de novo. |
+| **Moedas diferentes no mesmo relatório** | Receita **sempre agrupada por moeda** (`by_currency`). Nunca somo centavos de BRL com USD — o total seria sem sentido. |
+| **Tipo de evento desconhecido** | Em vez de `400` (que faria a plataforma reenviar pra sempre), **aceito e armazeno** com `recognized: false`. Tipos desconhecidos entram nas contagens, mas não afetam o cálculo de receita. _Seja liberal no que aceita._ |
+| **Eventos fora de ordem** | Cada evento é uma linha independente (chave `transaction_id + event`); o relatório agrega por soma, então a ordem de chegada (ex.: refund antes do approved) não corrompe os totais. |
+| **Payload inválido** | `400 validation_error` (campo obrigatório ausente, tipo errado). Reenviar não ajuda, então não peço retry. |
+| **Corpo gigante** | `bodyLimit` de 1 MB → `413`, evitando abuso de memória. |
+| **Campos extras no payload** | Aceitos (`additionalProperties: true`) e preservados em `raw_payload` — cada plataforma manda campos próprios. |
+| **Concorrência / corrida** | A dedup é garantida pelo banco (constraint), não por lógica de aplicação: dois postbacks idênticos simultâneos não geram duplicata. |
+
+### Edge cases conhecidos que decidi NÃO resolver (e por quê)
+
+- **Duplicata com dados divergentes.** Se a plataforma reenvia o mesmo `event_id` com
+  um `amount_cents` diferente, mantenho o primeiro registro (`INSERT OR IGNORE`) e
+  **logo um aviso**. Decidir "qual é o valor verdadeiro" exigiria regra de negócio que
+  o enunciado não define — prefiro não adivinhar silenciosamente.
+- **Replay malicioso.** O segredo compartilhado é estático: quem interceptar um request
+  pode reenviá-lo. A idempotência protege os dados (não duplica), mas a mitigação real
+  seria **assinatura HMAC + tolerância de timestamp** (como Stripe/Hotmart fazem).
+- **Falha de banco / erro inesperado.** Vira `500`, o que faz a plataforma **reenviar** —
+  comportamento correto para não perder a venda.
 
 ---
 
