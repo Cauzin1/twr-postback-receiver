@@ -1,7 +1,13 @@
 # Receptor de Postbacks — Desafio TWR
 
-Serviço em **TypeScript** que recebe notificações de venda (webhooks/postbacks) de
-plataformas de checkout via `POST` e expõe um relatório agregado via `GET`.
+Esse é o serviço que montei para o desafio da TWR: um app em **TypeScript** que recebe
+notificações de venda (webhooks/postbacks) de plataformas de checkout via `POST` e
+devolve um relatório agregado via `GET`.
+
+Desenvolvi pensando o tempo todo em como plataformas reais se comportam — elas
+reenviam o mesmo evento, mandam coisas fora de ordem e nem sempre no formato que a
+gente espera. Quase toda decisão daqui nasceu disso: preferi entregar poucas coisas,
+mas bem pensadas e que eu consiga defender, em vez de encher de features pela metade.
 
 - **URL pública:** **https://twr-postback-receiver.onrender.com**
   (plano free do Render — a primeira requisição após inatividade pode levar ~30–50 s enquanto a instância "acorda")
@@ -100,8 +106,31 @@ Filtros opcionais: `event`, `product_id`, `from` / `to` (ISO 8601), `limit` (1�
 
 ## Premissas e decisões
 
-O enunciado pedia explicitamente para pensar no que acontece com o serviço
-**recebendo notificações de plataformas reais**. As decisões abaixo giram em torno disso.
+O enunciado pedia pra eu pensar no serviço **recebendo notificações de plataformas
+reais**, e foi esse o fio condutor de tudo o que decidi.
+
+### Por que escolhi essa stack
+
+- **Fastify (em vez de Express).** Pra mim o ponto mais crítico de um receptor de
+  webhook é a entrada: ela vem de fora e eu não posso confiar nela. O Fastify valida o
+  corpo por JSON Schema *antes* do meu código rodar — eu só declaro o formato esperado
+  e ele barra o que estiver errado. No Express eu teria que trazer uma lib à parte
+  (`zod`/`joi`) pra ter a mesma garantia. Juntando isso à performance maior, ao suporte
+  nativo a `async/await` e ao logger embutido (Pino), ele foi a escolha natural.
+  Sei que a stack principal de vocês é Elysia + Bun — fiquei no Fastify porque é onde
+  consigo entregar algo sólido e explicar linha a linha, mas a ideia central (validar
+  na borda, deduplicar no banco) seria a mesma em qualquer um deles.
+
+- **SQLite (`better-sqlite3`).** Me dá persistência de verdade com zero infra e, o que
+  mais importa aqui, a constraint `UNIQUE` me entrega idempotência "de graça" — garantida
+  pelo banco, não por código meu. Uso o modo WAL pro `GET` do relatório não travar o `POST`.
+
+- **Render (em vez de serverless tipo Vercel).** Meu app é um processo que fica de pé,
+  com uma conexão SQLite viva entre as requisições. O Render roda exatamente esse modelo
+  "sempre ligado"; numa plataforma serverless a função sobe e morre a cada request, o que
+  quebraria o SQLite em arquivo. De quebra, o deploy sai do próprio Git via `render.yaml`
+  (infra como código, reproduzível) e dá pra evoluir pra disco persistente só trocando o
+  plano, sem mexer no código.
 
 ### O que eu fiz e por quê
 
@@ -110,17 +139,17 @@ O enunciado pedia explicitamente para pensar no que acontece com o serviço
   apenas inserisse, contaria a mesma venda múltiplas vezes. Cada evento tem um
   `event_id` (enviado pela plataforma ou derivado de `sha256(transaction_id + event)`)
   com **constraint `UNIQUE`** no banco. Um reenvio cai na mesma chave, é ignorado
-  (`INSERT OR IGNORE`) e respondemos `200 duplicate_ignored`. A deduplicação é
-  garantida pelo banco, não por lógica de aplicação sujeita a corrida.
+  (`INSERT OR IGNORE`) e eu devolvo `200 duplicate_ignored`. A deduplicação é garantida
+  pelo banco, não por lógica minha sujeita a corrida.
 
-- **Status HTTP pensados para o emissor.** Webhooks usam o status para decidir se
-  reenviam. Retornamos `2xx` sempre que a entrega foi bem-sucedida (inclusive em
-  duplicata), `400` para payload inválido (reenviar não vai ajudar) e `401` para
-  segredo inválido. Evitamos `500` em erro do cliente para não gerar storm de retry.
+- **Status HTTP pensados para o emissor.** Webhooks usam o status pra decidir se
+  reenviam. Então eu devolvo `2xx` sempre que a entrega deu certo (inclusive em
+  duplicata), `400` pra payload inválido (reenviar não vai ajudar) e `401` pra segredo
+  inválido. Evito `500` em erro do cliente pra não disparar um storm de retry.
 
 - **Validação estrita de entrada com JSON Schema.** O corpo é validado pelo próprio
-  Fastify antes de qualquer lógica. Entrada não-confiável é o coração de um receptor
-  de webhook — por isso escolhi Fastify (validação nativa) em vez de Express.
+  Fastify antes de qualquer lógica minha rodar — como falei na escolha da stack, a
+  entrada não-confiável é o coração de um receptor de webhook.
 
 - **Autenticação por segredo compartilhado** (`x-webhook-secret`, comparado em tempo
   constante). Opcional via env var para facilitar a avaliação pela URL. Dá para
@@ -128,9 +157,9 @@ O enunciado pedia explicitamente para pensar no que acontece com o serviço
 
 - **Dinheiro em centavos (inteiro).** Evita erros de ponto flutuante em somatórios.
 
-- **Persistência em SQLite.** Arquivo único, sem custo de infraestrutura. Modo WAL
-  para o `GET` de relatório não bloquear o `POST`. Em um host com disco persistente
-  o arquivo sobrevive a restart/redeploy (ver trade-off do plano free abaixo).
+- **Persistência em SQLite.** Já expliquei o porquê na escolha da stack; vale só
+  registrar que, num host com disco persistente, o arquivo sobrevive a restart/redeploy
+  (ver o trade-off do plano free mais abaixo).
 
 - **Payload cru guardado (`raw_payload`).** Para auditoria e reprocessamento futuro,
   mesmo que o modelo canônico evolua.
